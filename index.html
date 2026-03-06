@@ -1,0 +1,1652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- ================================================================
+       GRAVITY SHIFT — One-Tap Runner
+       ================================================================
+       Version   : 1.0.0
+       Platform  : HTML5 Canvas / Vanilla JS (zero dependencies)
+       Features  : i18n (5 langs) · Shop · Persistence · Particles
+                   Screen-Shake · HUD · Ad-Ready Hook · Responsive
+       Marketplaces: Codester / CodeCanyon ready
+       ================================================================ -->
+  <meta charset="UTF-8" />
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1.0,
+                 maximum-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable"       content="yes" />
+  <meta name="theme-color"                  content="#080818" />
+  <title>Gravity Shift</title>
+
+  <style>
+    /* ================================================================
+       BASE STYLES
+       ================================================================ */
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: 100%; height: 100%;
+      overflow: hidden;
+      background: #080818;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      /* Prevent accidental scroll / zoom on mobile */
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    #gc {
+      display: block;
+      cursor: pointer;
+      /* Pixel-sharp upscaling */
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gc"></canvas>
+
+  <script>
+  /* ================================================================
+     GRAVITY SHIFT  –  Complete Source
+     ================================================================ */
+  'use strict';
+
+  /* ----------------------------------------------------------------
+     §1  CANVAS BOOTSTRAP
+     ---------------------------------------------------------------- */
+  const canvas = document.getElementById('gc');
+  const ctx    = canvas.getContext('2d');
+
+  // Logical (base) resolution — all game coordinates use this space.
+  // The canvas element is CSS-scaled to fill the viewport.
+  const BW = 400;   // base width
+  const BH = 700;   // base height
+
+  // CSS scale factor (updated in resize())
+  let cssScale = 1;
+
+  // Canvas offset from viewport top-left (for pointer mapping)
+  let offX = 0, offY = 0;
+
+  /* ----------------------------------------------------------------
+     §2  GAME CONFIGURATION
+     ---------------------------------------------------------------- */
+  const CFG = Object.freeze({
+    // ── Physics ────────────────────────────────────────────────
+    GRAVITY      : 0.52,   // pixels/frame² (applied each frame)
+    FLIP_VEL     : 9.5,    // initial Y-speed applied on gravity flip
+    MAX_VEL      : 10.5,   // terminal velocity cap (absolute)
+
+    // ── World geometry ─────────────────────────────────────────
+    FLOOR_Y      : BH - 68, // Y where floor starts
+    CEIL_Y       : 68,       // Y where ceiling ends
+    PLAYER_X     : 95,       // fixed horizontal position
+    PLAYER_SZ    : 32,       // square side length (px)
+
+    // ── Speed ──────────────────────────────────────────────────
+    SPD_INIT     : 3.4,     // starting scroll speed (px/frame)
+    SPD_INC      : 0.00085, // added to speed each frame
+    SPD_MAX      : 10.2,    // absolute speed ceiling
+
+    // ── Obstacles ──────────────────────────────────────────────
+    OBS_W        : 42,      // obstacle width (px)
+    OBS_H_MIN    : 80,      // min obstacle height
+    OBS_H_MAX    : 215,     // max obstacle height
+    OBS_GAP_MIN  : 148,     // min gap size for pair obstacles
+    OBS_GAP_MAX  : 195,     // max gap size for pair obstacles
+    SPAWN_MIN    : 68,      // min frames between spawns
+    SPAWN_MAX    : 118,     // max frames between spawns
+
+    // ── Coins ──────────────────────────────────────────────────
+    COIN_R       : 9,       // coin radius (px)
+    COIN_CHANCE  : 0.50,    // probability a coin spawns with obstacle
+
+    // ── Scoring ────────────────────────────────────────────────
+    SCORE_RATE   : 0.048,   // score points added per frame (scales with speed)
+
+    // ── Juice ──────────────────────────────────────────────────
+    SHAKE_DUR    : 22,      // screen-shake duration (frames)
+    SHAKE_AMP    : 9,       // screen-shake amplitude (px)
+    PARTICLE_N   : 22,      // death-burst particle count
+    TRAIL_LEN    : 14,      // player motion-trail length
+
+    // ── Stars ──────────────────────────────────────────────────
+    STAR_N       : 65,      // parallax star count
+  });
+
+  /* ----------------------------------------------------------------
+     §3  INTERNATIONALIZATION  (i18n)
+         Supports: English · Arabic · Spanish · French · Chinese
+     ---------------------------------------------------------------- */
+  const LANG_IDS   = ['en', 'ar', 'es', 'fr', 'zh'];
+  const LANG_LABELS = { en:'EN', ar:'عر', es:'ES', fr:'FR', zh:'中文' };
+
+  /** All UI string tables — add more keys freely */
+  const STRINGS = {
+    en: {
+      title   : 'GRAVITY SHIFT',
+      sub     : 'One-Tap Runner',
+      play    : 'TAP TO PLAY',
+      shop    : 'SHOP',
+      score   : 'SCORE',
+      best    : 'BEST',
+      coins   : 'COINS',
+      over    : 'GAME OVER',
+      retry   : 'RETRY',
+      menu    : 'MENU',
+      buy     : 'BUY',
+      owned   : '✓ OWNED',
+      equipped: 'EQUIPPED',
+      equip   : 'EQUIP',
+      skins   : 'SKINS',
+      back    : '← BACK',
+      newBest : '🏆 NEW BEST!',
+      tip     : 'Tap / Space to flip gravity',
+      lang    : 'LANGUAGE',
+      speed   : 'SPEED',
+    },
+    ar: {
+      title   : 'تحول الجاذبية',
+      sub     : 'لعبة نقرة واحدة',
+      play    : 'اضغط للعب',
+      shop    : 'المتجر',
+      score   : 'النتيجة',
+      best    : 'الأفضل',
+      coins   : 'عملات',
+      over    : 'انتهت اللعبة',
+      retry   : 'إعادة',
+      menu    : 'القائمة',
+      buy     : 'شراء',
+      owned   : '✓ مملوك',
+      equipped: 'مجهّز',
+      equip   : 'تجهيز',
+      skins   : 'المظاهر',
+      back    : 'رجوع →',
+      newBest : '🏆 رقم جديد!',
+      tip     : 'اضغط لقلب الجاذبية',
+      lang    : 'اللغة',
+      speed   : 'السرعة',
+    },
+    es: {
+      title   : 'CAMBIO DE GRAVEDAD',
+      sub     : 'Corredor de un toque',
+      play    : 'TOCA PARA JUGAR',
+      shop    : 'TIENDA',
+      score   : 'PUNTOS',
+      best    : 'RÉCORD',
+      coins   : 'MONEDAS',
+      over    : 'FIN DEL JUEGO',
+      retry   : 'REINTENTAR',
+      menu    : 'MENÚ',
+      buy     : 'COMPRAR',
+      owned   : '✓ OBTENIDO',
+      equipped: 'EQUIPADO',
+      equip   : 'EQUIPAR',
+      skins   : 'SKINS',
+      back    : '← VOLVER',
+      newBest : '🏆 ¡NUEVO RÉCORD!',
+      tip     : '¡Toca para cambiar la gravedad!',
+      lang    : 'IDIOMA',
+      speed   : 'VELOCIDAD',
+    },
+    fr: {
+      title   : 'DÉCALAGE DE GRAVITÉ',
+      sub     : 'Runner en un tap',
+      play    : 'APPUYEZ POUR JOUER',
+      shop    : 'BOUTIQUE',
+      score   : 'SCORE',
+      best    : 'MEILLEUR',
+      coins   : 'PIÈCES',
+      over    : 'PARTIE TERMINÉE',
+      retry   : 'RÉESSAYER',
+      menu    : 'MENU',
+      buy     : 'ACHETER',
+      owned   : '✓ OBTENU',
+      equipped: 'ÉQUIPÉ',
+      equip   : 'ÉQUIPER',
+      skins   : 'SKINS',
+      back    : '← RETOUR',
+      newBest : '🏆 NOUVEAU RECORD!',
+      tip     : 'Appuyez pour inverser la gravité',
+      lang    : 'LANGUE',
+      speed   : 'VITESSE',
+    },
+    zh: {
+      title   : '重力转换',
+      sub     : '单击跑酷游戏',
+      play    : '点击开始游戏',
+      shop    : '商店',
+      score   : '分数',
+      best    : '最高分',
+      coins   : '金币',
+      over    : '游戏结束',
+      retry   : '重试',
+      menu    : '菜单',
+      buy     : '购买',
+      owned   : '✓ 已拥有',
+      equipped: '已装备',
+      equip   : '装备',
+      skins   : '皮肤',
+      back    : '← 返回',
+      newBest : '🏆 新纪录！',
+      tip     : '点击翻转重力！',
+      lang    : '语言',
+      speed   : '速度',
+    },
+  };
+
+  /** Translate a key using the active language */
+  function t(key) {
+    const lang = save ? save.lang : 'en';
+    return (STRINGS[lang] && STRINGS[lang][key])
+      ? STRINGS[lang][key]
+      : (STRINGS.en[key] || key);
+  }
+
+  /* ----------------------------------------------------------------
+     §4  PERSISTENCE  (localStorage)
+     ---------------------------------------------------------------- */
+  const SAVE_KEY = 'gs_save_v2';
+
+  /** Load or create a fresh save object */
+  function loadSave() {
+    try {
+      const raw = localStorage.getItem(SAVE_KEY);
+      if (raw) {
+        const d = JSON.parse(raw);
+        // Ensure required fields exist (forward-compatibility)
+        d.ownedSkins = d.ownedSkins || ['default'];
+        return d;
+      }
+    } catch (_) { /* storage blocked — degrade gracefully */ }
+    return {
+      highScore   : 0,
+      coins       : 0,
+      lang        : 'en',
+      equippedSkin: 'default',
+      ownedSkins  : ['default'],
+    };
+  }
+
+  /** Persist the current save object */
+  function persist() {
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify({
+        highScore   : save.highScore,
+        coins       : save.coins,
+        lang        : save.lang,
+        equippedSkin: save.equippedSkin,
+        ownedSkins  : save.ownedSkins,
+      }));
+    } catch (_) { /* storage full — silently ignore */ }
+  }
+
+  let save = loadSave();
+
+  /* ----------------------------------------------------------------
+     §5  SOUND SYSTEM (Web Audio API)
+     ---------------------------------------------------------------- */
+  // Web Audio API context and nodes
+  let audioContext = null;
+  let masterGainNode = null;
+  let isMuted = false;
+
+  // Initialize audio system
+  function initAudio() {
+    try {
+      audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      masterGainNode = audioContext.createGain();
+      masterGainNode.connect(audioContext.destination);
+      masterGainNode.gain.value = 0.7; // Default volume
+    } catch (e) {
+      console.warn('Web Audio API not supported:', e);
+    }
+  }
+
+  // Create a synthesized sound effect
+  function playSound(type) {
+    if (!audioContext || isMuted) return;
+
+    const oscillator = audioContext.createOscillator();
+    const gainNode = audioContext.createGain();
+    
+    oscillator.connect(gainNode);
+    gainNode.connect(masterGainNode);
+
+    const now = audioContext.currentTime;
+
+    switch (type) {
+      case 'jump':
+        // Jump sound: quick ascending tone
+        oscillator.frequency.setValueAtTime(200, now);
+        oscillator.frequency.exponentialRampToValueAtTime(600, now + 0.1);
+        gainNode.gain.setValueAtTime(0.3, now);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+        oscillator.start(now);
+        oscillator.stop(now + 0.1);
+        break;
+
+      case 'coin':
+        // Coin sound: sparkling chime
+        oscillator.frequency.setValueAtTime(800, now);
+        oscillator.frequency.exponentialRampToValueAtTime(1200, now + 0.05);
+        oscillator.frequency.exponentialRampToValueAtTime(1600, now + 0.1);
+        gainNode.gain.setValueAtTime(0.2, now);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+        oscillator.start(now);
+        oscillator.stop(now + 0.15);
+        break;
+
+      case 'collision':
+        // Collision sound: harsh descending noise
+        oscillator.type = 'sawtooth';
+        oscillator.frequency.setValueAtTime(300, now);
+        oscillator.frequency.exponentialRampToValueAtTime(50, now + 0.2);
+        gainNode.gain.setValueAtTime(0.4, now);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+        oscillator.start(now);
+        oscillator.stop(now + 0.2);
+        break;
+
+      case 'menuClick':
+        // Menu click: soft pop
+        oscillator.frequency.setValueAtTime(400, now);
+        oscillator.frequency.exponentialRampToValueAtTime(600, now + 0.03);
+        gainNode.gain.setValueAtTime(0.15, now);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.05);
+        oscillator.start(now);
+        oscillator.stop(now + 0.05);
+        break;
+
+      case 'newBest':
+        // New best score: celebratory melody
+        oscillator.frequency.setValueAtTime(523.25, now); // C5
+        oscillator.frequency.setValueAtTime(659.25, now + 0.1); // E5
+        oscillator.frequency.setValueAtTime(783.99, now + 0.2); // G5
+        gainNode.gain.setValueAtTime(0.25, now);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+        oscillator.start(now);
+        oscillator.stop(now + 0.3);
+        break;
+    }
+  }
+
+  // Toggle mute/unmute
+  function toggleMute() {
+    isMuted = !isMuted;
+    if (masterGainNode) {
+      masterGainNode.gain.value = isMuted ? 0 : 0.7;
+    }
+    return isMuted;
+  }
+
+  /* ----------------------------------------------------------------
+     §6  SHOP — SKINS CATALOGUE
+     ---------------------------------------------------------------- */
+  /**
+   * Each skin entry:
+   *   id         – unique identifier (also localStorage key)
+   *   label      – display name
+   *   color      – main fill color
+   *   glow       – shadow/glow color
+   *   price      – coin cost (0 = free default)
+   */
+  const SKINS = [
+    { id:'default', label:'Classic', color:'#4FC3F7', glow:'#0077BB', price:0   },
+    { id:'fire',    label:'Fire',    color:'#FF5722', glow:'#DD1100', price:50   },
+    { id:'forest',  label:'Forest',  color:'#66BB6A', glow:'#1B7A22', price:75   },
+    { id:'royal',   label:'Royal',   color:'#AB47BC', glow:'#6A0080', price:100  },
+    { id:'gold',    label:'Gold',    color:'#FFD700', glow:'#CC8800', price:200  },
+    { id:'neon',    label:'Neon',    color:'#00FFAA', glow:'#008855', price:150  },
+  ];
+
+  const getSkin = id => SKINS.find(s => s.id === id) || SKINS[0];
+  const activeSkin = () => getSkin(save.equippedSkin);
+
+  /* ----------------------------------------------------------------
+     §6  STATE MACHINE
+     ---------------------------------------------------------------- */
+  const S = { MENU:0, PLAY:1, OVER:2, SHOP:3 };
+  let state = S.MENU;
+
+  /* ----------------------------------------------------------------
+     §7  PARTICLE SYSTEM
+     ---------------------------------------------------------------- */
+  let particles = [];
+
+  /**
+   * Emit a radial burst of glowing particles.
+   * @param {number} x      – origin X
+   * @param {number} y      – origin Y
+   * @param {string} color  – CSS color string
+   * @param {number} n      – particle count
+   * @param {number} [spd=3.5] – max launch speed
+   */
+  function emitParticles(x, y, color, n, spd = 3.5) {
+    for (let i = 0; i < n; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 1.2 + Math.random() * spd;
+      particles.push({
+        x, y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        r : 2.5 + Math.random() * 4.5,
+        color,
+        life: 0,
+        maxLife: 30 + Math.floor(Math.random() * 25),
+      });
+    }
+  }
+
+  /** Step all particles one frame */
+  function tickParticles() {
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.x  += p.vx;
+      p.y  += p.vy;
+      p.vy += 0.12;        // micro-gravity on particles
+      p.vx *= 0.97;        // air friction
+      p.life++;
+      if (p.life >= p.maxLife) particles.splice(i, 1);
+    }
+  }
+
+  /** Render all live particles */
+  function drawParticles() {
+    for (const p of particles) {
+      const a = 1 - p.life / p.maxLife;
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.shadowColor = p.color;
+      ctx.shadowBlur  = 8;
+      ctx.fillStyle   = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r * a + 0.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  /* ----------------------------------------------------------------
+     §8  SCREEN SHAKE
+     ---------------------------------------------------------------- */
+  let shakeTTL = 0;   // frames remaining
+  let shakeX = 0, shakeY = 0;
+
+  /** Trigger a new shake burst */
+  const triggerShake = () => { shakeTTL = CFG.SHAKE_DUR; };
+
+  /** Compute shake offset for this frame */
+  function tickShake() {
+    if (shakeTTL > 0) {
+      const amp = (shakeTTL / CFG.SHAKE_DUR) * CFG.SHAKE_AMP;
+      shakeX = (Math.random() * 2 - 1) * amp;
+      shakeY = (Math.random() * 2 - 1) * amp;
+      shakeTTL--;
+    } else {
+      shakeX = shakeY = 0;
+    }
+  }
+
+  /* ----------------------------------------------------------------
+     §9  PLAYER
+     ---------------------------------------------------------------- */
+  const player = {
+    x   : CFG.PLAYER_X,
+    y   : 0,
+    vy  : 0,
+    dir : 1,          // gravity direction: +1 = down, -1 = up
+    sz  : CFG.PLAYER_SZ,
+    rot : 0,          // visual rotation (radians)
+    trail : [],       // array of {x,y} past positions
+    alive : true,
+    pulse : 0,        // sinusoidal glow phase
+
+    /** Reset to starting state */
+    reset() {
+      this.y     = CFG.FLOOR_Y - this.sz;
+      this.vy    = 0;
+      this.dir   = 1;
+      this.rot   = 0;
+      this.trail = [];
+      this.alive = true;
+      this.pulse = 0;
+    },
+
+    /** Flip gravity on tap */
+    flip() {
+      if (!this.alive) return;
+      this.dir = -this.dir;
+      this.vy  = -this.dir * CFG.FLIP_VEL;
+      playSound('jump');
+    },
+
+    /** Physics + boundary step */
+    tick() {
+      if (!this.alive) return;
+
+      // Record trail head
+      this.trail.unshift({ x: this.x, y: this.y + this.sz * 0.5 });
+      if (this.trail.length > CFG.TRAIL_LEN) this.trail.pop();
+
+      // Apply gravity
+      this.vy = Math.max(-CFG.MAX_VEL,
+                  Math.min(CFG.MAX_VEL, this.vy + CFG.GRAVITY * this.dir));
+      this.y += this.vy;
+
+      // Spin relative to vertical velocity
+      this.rot += this.vy * this.dir * 0.035;
+
+      // Floor clamp
+      if (this.y + this.sz >= CFG.FLOOR_Y) {
+        this.y  = CFG.FLOOR_Y - this.sz;
+        this.vy = 0;
+        if (this.dir === 1) this.rot = roundRot(this.rot);
+      }
+      // Ceiling clamp
+      if (this.y <= CFG.CEIL_Y) {
+        this.y  = CFG.CEIL_Y;
+        this.vy = 0;
+        if (this.dir === -1) this.rot = roundRot(this.rot);
+      }
+
+      this.pulse += 0.09;
+    },
+
+    /** Render player + trail + gravity arrow */
+    draw() {
+      const skin = activeSkin();
+      const cx   = this.x + this.sz * 0.5;
+      const cy   = this.y + this.sz * 0.5;
+
+      // — Motion trail —
+      for (let i = 0; i < this.trail.length; i++) {
+        const tp  = this.trail[i];
+        const fac = 1 - i / this.trail.length;
+        const ts  = this.sz * fac * 0.55;
+        ctx.save();
+        ctx.globalAlpha = fac * 0.28;
+        ctx.fillStyle   = skin.color;
+        ctx.fillRect(tp.x - ts * 0.5, tp.y - ts * 0.5, ts, ts);
+        ctx.restore();
+      }
+
+      // — Glow halo —
+      const gp = Math.sin(this.pulse) * 5;
+      ctx.save();
+      ctx.shadowColor = skin.glow;
+      ctx.shadowBlur  = 22 + gp;
+
+      // — Body square (rotated) —
+      ctx.translate(cx, cy);
+      ctx.rotate(this.rot);
+      ctx.fillStyle = skin.color;
+      ctx.fillRect(-this.sz * 0.5, -this.sz * 0.5, this.sz, this.sz);
+
+      // — Inner highlight (top-left corner) —
+      ctx.fillStyle = 'rgba(255,255,255,0.22)';
+      ctx.fillRect(-this.sz * 0.5 + 4, -this.sz * 0.5 + 4,
+                    this.sz * 0.4, this.sz * 0.4);
+      ctx.restore();
+
+      // — Gravity arrow —
+      this._drawArrow(cx, cy, skin.color);
+    },
+
+    /** Small directional arrow below/above player */
+    _drawArrow(cx, cy, color) {
+      const offset = this.sz * 0.75;
+      const ay = this.dir === 1 ? cy + offset : cy - offset;
+      ctx.save();
+      ctx.globalAlpha = 0.65;
+      ctx.fillStyle   = color;
+      ctx.shadowColor = color;
+      ctx.shadowBlur  = 6;
+      ctx.beginPath();
+      if (this.dir === 1) {
+        ctx.moveTo(cx,     ay + 7);
+        ctx.lineTo(cx - 6, ay - 3);
+        ctx.lineTo(cx + 6, ay - 3);
+      } else {
+        ctx.moveTo(cx,     ay - 7);
+        ctx.lineTo(cx - 6, ay + 3);
+        ctx.lineTo(cx + 6, ay + 3);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    },
+
+    /** AABB collision box with slight forgiveness margin */
+    bounds() {
+      const m = 4;
+      return {
+        l: this.x + m,
+        r: this.x + this.sz - m,
+        t: this.y + m,
+        b: this.y + this.sz - m,
+      };
+    },
+  };
+
+  /** Snap rotation to nearest 90° for clean landing */
+  const roundRot = r => Math.round(r / (Math.PI * 0.5)) * (Math.PI * 0.5);
+
+  /* ----------------------------------------------------------------
+     §10  OBSTACLE SYSTEM
+     ---------------------------------------------------------------- */
+  let obstacles   = [];
+  let obsTimer    = 0;
+  let obsInterval = CFG.SPAWN_MAX;
+
+  /**
+   * Randomly pick one of three obstacle patterns:
+   *   'top'    – pillar hanging from ceiling
+   *   'bottom' – pillar rising from floor
+   *   'pair'   – top + bottom with a navigable gap
+   */
+  function spawnObstacle() {
+    const types   = ['top', 'bottom', 'pair'];
+    const type    = types[Math.floor(Math.random() * 3)];
+    const playH   = CFG.FLOOR_Y - CFG.CEIL_Y;
+    const obsCol  = pickObsColor();
+
+    if (type === 'pair') {
+      const gap  = CFG.OBS_GAP_MIN + Math.random() * (CFG.OBS_GAP_MAX - CFG.OBS_GAP_MIN);
+      const gapY = CFG.CEIL_Y + 36 + Math.random() * (playH - gap - 72);
+      // Top block
+      obstacles.push({ x: BW + 8, y: CFG.CEIL_Y,  w: CFG.OBS_W, h: gapY - CFG.CEIL_Y,            color: obsCol });
+      // Bottom block
+      obstacles.push({ x: BW + 8, y: gapY + gap,  w: CFG.OBS_W, h: CFG.FLOOR_Y - (gapY + gap),   color: obsCol });
+
+    } else if (type === 'top') {
+      const h = CFG.OBS_H_MIN + Math.random() * (CFG.OBS_H_MAX - CFG.OBS_H_MIN);
+      obstacles.push({ x: BW + 8, y: CFG.CEIL_Y, w: CFG.OBS_W, h, color: obsCol });
+
+    } else {
+      const h = CFG.OBS_H_MIN + Math.random() * (CFG.OBS_H_MAX - CFG.OBS_H_MIN);
+      obstacles.push({ x: BW + 8, y: CFG.FLOOR_Y - h, w: CFG.OBS_W, h, color: obsCol });
+    }
+
+    // Optionally spawn a coin at the same time
+    if (Math.random() < CFG.COIN_CHANCE) spawnCoin();
+  }
+
+  /** Pick a random obstacle color from a danger palette */
+  function pickObsColor() {
+    const c = ['#F44336','#FF6D00','#E91E63','#B71C1C'];
+    return c[Math.floor(Math.random() * c.length)];
+  }
+
+  /** Move + cull obstacles each frame */
+  function tickObstacles(spd) {
+    obsTimer++;
+    if (obsTimer >= obsInterval) {
+      obsTimer    = 0;
+      obsInterval = CFG.SPAWN_MIN + Math.random() * (CFG.SPAWN_MAX - CFG.SPAWN_MIN);
+      spawnObstacle();
+    }
+    for (let i = obstacles.length - 1; i >= 0; i--) {
+      obstacles[i].x -= spd;
+      if (obstacles[i].x + obstacles[i].w < -4) obstacles.splice(i, 1);
+    }
+  }
+
+  /** Render all obstacles with depth effect */
+  function drawObstacles() {
+    for (const o of obstacles) {
+      ctx.save();
+      // Outer glow
+      ctx.shadowColor = o.color;
+      ctx.shadowBlur  = 14;
+      ctx.fillStyle   = o.color;
+      ctx.fillRect(o.x, o.y, o.w, o.h);
+      // Dark inner recess
+      ctx.shadowBlur  = 0;
+      ctx.fillStyle   = 'rgba(0,0,0,0.28)';
+      ctx.fillRect(o.x + 5, o.y + 5, o.w - 10, o.h - 10);
+      // Left edge highlight
+      ctx.fillStyle   = 'rgba(255,255,255,0.14)';
+      ctx.fillRect(o.x, o.y, 3, o.h);
+      ctx.restore();
+    }
+  }
+
+  /** AABB test: player vs all obstacles */
+  function hitObstacle() {
+    const b = player.bounds();
+    for (const o of obstacles) {
+      if (b.r > o.x && b.l < o.x + o.w &&
+          b.b > o.y && b.t < o.y + o.h) return true;
+    }
+    return false;
+  }
+
+  /* ----------------------------------------------------------------
+     §11  COIN SYSTEM
+     ---------------------------------------------------------------- */
+  let coins = [];
+
+  /** Spawn a single coin at a random vertical position */
+  function spawnCoin() {
+    const playH = CFG.FLOOR_Y - CFG.CEIL_Y - 60;
+    coins.push({
+      x    : BW + 55 + Math.random() * 90,
+      y    : CFG.CEIL_Y + 30 + Math.random() * playH,
+      r    : CFG.COIN_R,
+      phase: Math.random() * Math.PI * 2,  // individual bob phase
+      done : false,
+    });
+  }
+
+  /** Move, collect, and cull coins each frame */
+  function tickCoins(spd) {
+    for (let i = coins.length - 1; i >= 0; i--) {
+      const c = coins[i];
+      c.x    -= spd;
+      c.phase += 0.07;
+
+      if (!c.done) {
+        const pb = player.bounds();
+        // Circle-AABB overlap check
+        if (pb.r > c.x - c.r && pb.l < c.x + c.r &&
+            pb.b > c.y - c.r && pb.t < c.y + c.r) {
+          c.done = true;
+          save.coins++;
+          persist();
+          playSound('coin');
+          emitParticles(c.x, c.y, '#FFD700', 8, 2.8);
+        }
+      }
+      if (c.x + c.r < 0 || c.done) coins.splice(i, 1);
+    }
+  }
+
+  /** Render all coins with pulsing glow */
+  function drawCoins() {
+    for (const c of coins) {
+      const bob = Math.sin(c.phase) * 1.8;
+      ctx.save();
+      ctx.shadowColor = '#FFD700';
+      ctx.shadowBlur  = 12 + bob;
+      ctx.fillStyle   = '#FFD700';
+      ctx.beginPath();
+      ctx.arc(c.x, c.y + bob, c.r, 0, Math.PI * 2);
+      ctx.fill();
+      // Shine dot
+      ctx.fillStyle   = 'rgba(255,255,255,0.55)';
+      ctx.shadowBlur  = 0;
+      ctx.beginPath();
+      ctx.arc(c.x - 2.5, c.y + bob - 2.5, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  /* ----------------------------------------------------------------
+     §12  BACKGROUND (parallax stars + scrolling grid)
+     ---------------------------------------------------------------- */
+  let stars   = [];
+  let gridOff = 0;   // horizontal scroll offset for grid lines
+
+  /** Initialise the star field */
+  function initStars() {
+    stars = [];
+    for (let i = 0; i < CFG.STAR_N; i++) {
+      stars.push({
+        x    : Math.random() * BW,
+        y    : Math.random() * BH,
+        size : 0.4 + Math.random() * 1.8,
+        spd  : 0.15 + Math.random() * 0.45,
+        alpha: 0.25 + Math.random() * 0.75,
+      });
+    }
+  }
+
+  /** Draw full background: gradient + stars + grid */
+  function drawBG(spd) {
+    // Sky gradient
+    const g = ctx.createLinearGradient(0, 0, 0, BH);
+    g.addColorStop(0, '#080818');
+    g.addColorStop(1, '#0b1825');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, BW, BH);
+
+    // Parallax stars
+    for (const s of stars) {
+      s.x -= s.spd * (spd / CFG.SPD_INIT);
+      if (s.x < 0) { s.x = BW; s.y = Math.random() * BH; }
+      ctx.save();
+      ctx.globalAlpha = s.alpha;
+      ctx.fillStyle   = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // Subtle scrolling grid
+    gridOff = (gridOff + spd * 0.45) % 40;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(80,130,255,0.035)';
+    ctx.lineWidth   = 1;
+    for (let x = -gridOff; x < BW + 40; x += 40) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, BH); ctx.stroke();
+    }
+    for (let y = 0; y < BH + 40; y += 40) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(BW, y); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /** Draw glowing floor and ceiling strips */
+  function drawBoundaries() {
+    // ── Floor ──────────────────────────────────────────────────
+    const fg = ctx.createLinearGradient(0, CFG.FLOOR_Y, 0, BH);
+    fg.addColorStop(0, '#152850');
+    fg.addColorStop(1, '#0a1528');
+    ctx.fillStyle = fg;
+    ctx.fillRect(0, CFG.FLOOR_Y, BW, BH - CFG.FLOOR_Y);
+
+    ctx.save();
+    ctx.shadowColor = '#3399FF';
+    ctx.shadowBlur  = 12;
+    ctx.fillStyle   = '#3399FF';
+    ctx.fillRect(0, CFG.FLOOR_Y, BW, 3);
+    ctx.restore();
+
+    // ── Ceiling ────────────────────────────────────────────────
+    const cg = ctx.createLinearGradient(0, 0, 0, CFG.CEIL_Y);
+    cg.addColorStop(0, '#0a1528');
+    cg.addColorStop(1, '#152850');
+    ctx.fillStyle = cg;
+    ctx.fillRect(0, 0, BW, CFG.CEIL_Y);
+
+    ctx.save();
+    ctx.shadowColor = '#3399FF';
+    ctx.shadowBlur  = 12;
+    ctx.fillStyle   = '#3399FF';
+    ctx.fillRect(0, CFG.CEIL_Y - 3, BW, 3);
+    ctx.restore();
+  }
+
+  /* ----------------------------------------------------------------
+     §13  GAME VARIABLES
+     ---------------------------------------------------------------- */
+  let score      = 0;
+  let speed      = CFG.SPD_INIT;
+  let frame      = 0;          // increments while in PLAY state
+  let isNewBest  = false;
+  let animT      = 0;          // menu idle animation timer
+
+  // Button hit-regions populated during draw pass (render-frame pattern)
+  let menuBtns   = {};
+  let overBtns   = {};
+  let shopBtns   = [];
+  let langBarR   = null;       // { x, y, w:totalW, h, itemW:62 }
+  let muteBtn    = null;       // mute button region
+
+  /* ----------------------------------------------------------------
+     §14  MONETIZATION HOOK  (Ad-Ready placeholder)
+     ---------------------------------------------------------------- */
+  /**
+   * showInterstitialAd()
+   * ─────────────────────────────────────────────────────────────────
+   * Plug your ad network SDK into the body of this function.
+   *
+   * Supported networks (examples):
+   *   Google AdMob   → admob.interstitial.show()
+   *   IronSource     → IronSource.showInterstitial('DefaultPlacement')
+   *   AppLovin Max   → AppLovinMAX.showInterstitial(adUnitId)
+   *   Unity Ads      → UnityAds.show('video')
+   *   Chartboost     → Chartboost.showInterstitial(CBLocation.Default)
+   *
+   * Call startGame() inside the ad's completion callback to resume.
+   *
+   * @returns {void}
+   */
+  function showInterstitialAd() {
+    // ── DEVELOPER NOTE ────────────────────────────────────────────
+    // Replace this stub with your ad-network SDK call.
+    // The game will continue immediately below; in production you
+    // would delay startGame() until the ad's onClose callback fires.
+    // ─────────────────────────────────────────────────────────────
+    console.log('[GravityShift] showInterstitialAd() – replace with your SDK call.');
+
+    /* ── EXAMPLE (pseudo-code, do not uncomment) ──────────────────
+    if (typeof myAdSDK !== 'undefined' && myAdSDK.isReady()) {
+      myAdSDK.show({
+        onClose   : () => startGame(),
+        onError   : () => startGame(),
+        onSkip    : () => startGame(),
+      });
+    } else {
+      startGame();  // fallback: no ad loaded
+    }
+    ─────────────────────────────────────────────────────────────── */
+  }
+
+  /* ----------------------------------------------------------------
+     §15  GAME LIFECYCLE
+     ---------------------------------------------------------------- */
+  /** Reset every dynamic element and enter PLAY state */
+  function startGame() {
+    score      = 0;
+    speed      = CFG.SPD_INIT;
+    frame      = 0;
+    isNewBest  = false;
+    obstacles  = [];
+    coins      = [];
+    particles  = [];
+    obsTimer   = 0;
+    obsInterval= CFG.SPAWN_MAX;
+    shakeTTL   = 0;
+    gridOff    = 0;
+    player.reset();
+    state      = S.PLAY;
+  }
+
+  /** Kill the player, evaluate score, transition to GAME OVER */
+  function die() {
+    player.alive = false;
+    triggerShake();
+    playSound('collision');
+    emitParticles(
+      player.x + player.sz * 0.5,
+      player.y + player.sz * 0.5,
+      activeSkin().color,
+      CFG.PARTICLE_N, 4.5
+    );
+    const finalScore = Math.floor(score);
+    if (finalScore > save.highScore) {
+      save.highScore = finalScore;
+      isNewBest      = true;
+      playSound('newBest');
+    }
+    persist();
+    state = S.OVER;
+  }
+
+  /* ----------------------------------------------------------------
+     §16  DRAWING UTILITIES
+     ---------------------------------------------------------------- */
+  /**
+   * Draw a rounded-rectangle path (does NOT call fill/stroke).
+   * @param {number} x y w h r  – bounds + corner radius
+   */
+  function rrPath(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y,     x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x,     y + h, r);
+    ctx.arcTo(x,     y + h, x,     y,     r);
+    ctx.arcTo(x,     y,     x + w, y,     r);
+    ctx.closePath();
+  }
+
+  /**
+   * Draw a glowing button and return its AABB for hit-testing.
+   * @returns {{ x,y,w,h }}
+   */
+  function drawBtn(x, y, w, h, label, bg, fg, r = 10) {
+    ctx.save();
+    ctx.shadowColor = bg;
+    ctx.shadowBlur  = 12;
+    ctx.fillStyle   = bg;
+    rrPath(x, y, w, h, r);
+    ctx.fill();
+    ctx.shadowBlur  = 0;
+    ctx.fillStyle   = fg;
+    ctx.font        = 'bold 14px Arial,sans-serif';
+    ctx.textAlign   = 'center';
+    ctx.textBaseline= 'middle';
+    ctx.fillText(label, x + w * 0.5, y + h * 0.5);
+    ctx.restore();
+    return { x, y, w, h };
+  }
+
+  /** Draw a frosted-glass panel */
+  function drawPanel(x, y, w, h, r = 16) {
+    ctx.save();
+    ctx.fillStyle   = 'rgba(8,12,32,0.94)';
+    ctx.strokeStyle = 'rgba(60,130,255,0.45)';
+    ctx.lineWidth   = 2;
+    ctx.shadowColor = '#2255CC';
+    ctx.shadowBlur  = 24;
+    rrPath(x, y, w, h, r);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /**
+   * Draw the language-selector bar and register it for hit-testing.
+   * @param {number} cy  – vertical centre of bar
+   */
+  function drawLangBar(cy) {
+    const itemW  = 54;
+    const itemH  = 28;
+    const gap    = 8;
+    const totalW = LANG_IDS.length * itemW + (LANG_IDS.length - 1) * gap;
+    const sx     = (BW - totalW) * 0.5;
+
+    LANG_IDS.forEach((lid, i) => {
+      const bx     = sx + i * (itemW + gap);
+      const active = save.lang === lid;
+      ctx.save();
+      ctx.fillStyle   = active ? '#3388EE' : 'rgba(255,255,255,0.09)';
+      ctx.shadowColor = active ? '#3388EE' : 'transparent';
+      ctx.shadowBlur  = active ? 8 : 0;
+      rrPath(bx, cy - itemH * 0.5, itemW, itemH, 6);
+      ctx.fill();
+      ctx.fillStyle    = active ? '#fff' : 'rgba(255,255,255,0.45)';
+      ctx.font         = `bold 12px Arial,sans-serif`;
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(LANG_LABELS[lid], bx + itemW * 0.5, cy);
+      ctx.restore();
+    });
+
+    // Register for hit-testing
+    langBarR = { x: sx, y: cy - itemH * 0.5, h: itemH, itemW, gap };
+  }
+
+  /** Test whether a logical point (lx,ly) is inside a rect {x,y,w,h} */
+  const hit = (r, lx, ly) =>
+    lx >= r.x && lx <= r.x + r.w && ly >= r.y && ly <= r.y + r.h;
+
+  /* ----------------------------------------------------------------
+     §17  HUD  (drawn during PLAY state)
+     ---------------------------------------------------------------- */
+  function drawHUD() {
+    const skin = activeSkin();
+
+    // — Score (centre top) —
+    ctx.save();
+    ctx.textAlign   = 'center';
+    ctx.textBaseline= 'alphabetic';
+    ctx.fillStyle   = '#ffffff';
+    ctx.shadowColor = skin.glow;
+    ctx.shadowBlur  = 10;
+    ctx.font        = 'bold 26px Arial,sans-serif';
+    ctx.fillText(Math.floor(score), BW * 0.5, CFG.CEIL_Y - 9);
+    ctx.restore();
+
+    // — Coin counter (top right) —
+    ctx.save();
+    ctx.textAlign   = 'right';
+    ctx.textBaseline= 'alphabetic';
+    ctx.fillStyle   = '#FFD700';
+    ctx.shadowColor = '#FFD700';
+    ctx.shadowBlur  = 7;
+    ctx.font        = 'bold 15px Arial,sans-serif';
+    ctx.fillText(`⬡ ${save.coins}`, BW - 10, CFG.CEIL_Y - 9);
+    ctx.restore();
+
+    // — Speed bar (below floor) —
+    const pct  = (speed - CFG.SPD_INIT) / (CFG.SPD_MAX - CFG.SPD_INIT);
+    const bx   = 18, by = CFG.FLOOR_Y + 10, bw = BW - 36, bh = 4;
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.fillRect(bx, by, bw, bh);
+    ctx.fillStyle = skin.color;
+    ctx.shadowColor = skin.glow;
+    ctx.shadowBlur  = 6;
+    ctx.fillRect(bx, by, bw * Math.min(pct, 1), bh);
+    ctx.shadowBlur  = 0;
+
+    // — Mute button (top left) —
+    const muteSize = 24;
+    const muteX = 10;
+    const muteY = CFG.CEIL_Y - muteSize - 5;
+    
+    ctx.save();
+    ctx.fillStyle = isMuted ? 'rgba(255,68,68,0.8)' : 'rgba(76,195,247,0.8)';
+    ctx.shadowColor = isMuted ? '#FF4444' : skin.glow;
+    ctx.shadowBlur  = 8;
+    ctx.font = 'bold 16px Arial,sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(isMuted ? '🔇' : '🔊', muteX + muteSize/2, muteY + muteSize/2);
+    ctx.restore();
+    
+    muteBtn = { x: muteX, y: muteY, w: muteSize, h: muteSize };
+  }
+
+  /* ----------------------------------------------------------------
+     §18  MENU SCREEN
+     ---------------------------------------------------------------- */
+  function drawMenu() {
+    animT += 0.018;
+    drawBG(CFG.SPD_INIT * 0.55);
+    drawBoundaries();
+
+    // Floating preview player
+    const previewY = CFG.CEIL_Y + (CFG.FLOOR_Y - CFG.CEIL_Y) * 0.5 +
+                     Math.sin(animT * 1.2) * 52 - player.sz * 0.5;
+    const skin     = activeSkin();
+    ctx.save();
+    ctx.shadowColor = skin.glow;
+    ctx.shadowBlur  = 24;
+    ctx.fillStyle   = skin.color;
+    ctx.fillRect(CFG.PLAYER_X, previewY, player.sz, player.sz);
+    ctx.restore();
+
+    // — Game title —
+    ctx.save();
+    ctx.textAlign   = 'center';
+    ctx.textBaseline= 'alphabetic';
+    ctx.fillStyle   = '#ffffff';
+    ctx.shadowColor = '#3366CC';
+    ctx.shadowBlur  = 22;
+    ctx.font        = 'bold 30px Arial,sans-serif';
+    ctx.fillText(t('title'), BW * 0.5, BH * 0.22);
+    ctx.restore();
+
+    // — Subtitle —
+    ctx.save();
+    ctx.textAlign   = 'center';
+    ctx.fillStyle   = 'rgba(140,190,255,0.80)';
+    ctx.font        = '13px Arial,sans-serif';
+    ctx.fillText(t('sub'), BW * 0.5, BH * 0.275);
+    ctx.restore();
+
+    // — High-score / coins row —
+    ctx.save();
+    ctx.textAlign   = 'center';
+    ctx.fillStyle   = '#FFD700';
+    ctx.shadowColor = '#FFD700';
+    ctx.shadowBlur  = 5;
+    ctx.font        = '15px Arial,sans-serif';
+    ctx.fillText(
+      `${t('best')}: ${save.highScore}    ${t('coins')}: ${save.coins}`,
+      BW * 0.5, BH * 0.36
+    );
+    ctx.restore();
+
+    // — PLAY button —
+    menuBtns.play = drawBtn(BW * 0.5 - 100, BH * 0.52,
+                            200, 52, t('play'), '#2255CC', '#ffffff');
+
+    // — SHOP button —
+    menuBtns.shop = drawBtn(BW * 0.5 - 75, BH * 0.645,
+                            150, 44, t('shop'), '#CC8800', '#000000');
+
+    // — Language bar —
+    drawLangBar(BH * 0.80);
+
+    // — Tip (blinking) —
+    const blink = (Math.sin(animT * 3) + 1) * 0.5;
+    ctx.save();
+    ctx.globalAlpha = 0.45 + blink * 0.55;
+    ctx.textAlign   = 'center';
+    ctx.fillStyle   = 'rgba(140,190,255,0.90)';
+    ctx.font        = '12px Arial,sans-serif';
+    ctx.fillText(t('tip'), BW * 0.5, BH * 0.93);
+    ctx.restore();
+  }
+
+  /* ----------------------------------------------------------------
+     §19  GAME-OVER SCREEN
+     ---------------------------------------------------------------- */
+  function drawGameOver() {
+    // Dim game-world behind panel
+    ctx.fillStyle = 'rgba(0,0,0,0.60)';
+    ctx.fillRect(0, 0, BW, BH);
+
+    const px = 38, py = BH * 0.20;
+    const pw = BW - 76, ph = BH * 0.58;
+    drawPanel(px, py, pw, ph);
+
+    // — GAME OVER title —
+    ctx.save();
+    ctx.textAlign   = 'center';
+    ctx.fillStyle   = '#FF4444';
+    ctx.shadowColor = '#FF0000';
+    ctx.shadowBlur  = 22;
+    ctx.font        = 'bold 28px Arial,sans-serif';
+    ctx.fillText(t('over'), BW * 0.5, py + 52);
+    ctx.restore();
+
+    // — New-best badge —
+    if (isNewBest) {
+      ctx.save();
+      ctx.textAlign   = 'center';
+      ctx.fillStyle   = '#FFD700';
+      ctx.shadowColor = '#FFA500';
+      ctx.shadowBlur  = 14;
+      ctx.font        = 'bold 17px Arial,sans-serif';
+      ctx.fillText(t('newBest'), BW * 0.5, py + 82);
+      ctx.restore();
+    }
+
+    // — Score value —
+    ctx.save();
+    ctx.textAlign   = 'center';
+    ctx.fillStyle   = 'rgba(255,255,255,0.6)';
+    ctx.font        = '14px Arial,sans-serif';
+    ctx.fillText(t('score'), BW * 0.5, py + 112);
+    ctx.fillStyle   = '#4FC3F7';
+    ctx.shadowColor = '#0088CC';
+    ctx.shadowBlur  = 10;
+    ctx.font        = 'bold 50px Arial,sans-serif';
+    ctx.fillText(Math.floor(score), BW * 0.5, py + 165);
+    ctx.restore();
+
+    // — Best score —
+    ctx.save();
+    ctx.textAlign   = 'center';
+    ctx.fillStyle   = 'rgba(255,215,0,0.85)';
+    ctx.font        = '14px Arial,sans-serif';
+    ctx.fillText(`${t('best')}: ${save.highScore}`, BW * 0.5, py + 194);
+    ctx.restore();
+
+    // — Coins total —
+    ctx.save();
+    ctx.textAlign   = 'center';
+    ctx.fillStyle   = '#FFD700';
+    ctx.font        = '14px Arial,sans-serif';
+    ctx.fillText(`${t('coins')}: ${save.coins}`, BW * 0.5, py + 218);
+    ctx.restore();
+
+    // — RETRY button —
+    overBtns.retry = drawBtn(BW * 0.5 - 88, py + ph - 98,
+                             176, 42, t('retry'), '#2255CC', '#ffffff');
+    // — MENU button —
+    overBtns.menu  = drawBtn(BW * 0.5 - 88, py + ph - 48,
+                             176, 38, t('menu'), 'rgba(255,255,255,0.13)', '#ffffff');
+  }
+
+  /* ----------------------------------------------------------------
+     §20  SHOP SCREEN
+     ---------------------------------------------------------------- */
+  function drawShop() {
+    drawBG(0);
+    drawBoundaries();
+
+    // — SKINS header —
+    ctx.save();
+    ctx.textAlign   = 'center';
+    ctx.fillStyle   = '#ffffff';
+    ctx.shadowColor = '#FFD700';
+    ctx.shadowBlur  = 14;
+    ctx.font        = 'bold 24px Arial,sans-serif';
+    ctx.fillText(t('skins'), BW * 0.5, 44);
+    ctx.restore();
+
+    // — Coin balance —
+    ctx.save();
+    ctx.textAlign   = 'center';
+    ctx.fillStyle   = '#FFD700';
+    ctx.font        = 'bold 15px Arial,sans-serif';
+    ctx.fillText(`⬡ ${save.coins}`, BW * 0.5, 68);
+    ctx.restore();
+
+    // — Skin cards grid (2 columns) —
+    shopBtns = [];
+    const cols = 2;
+    const padX = 16;
+    const padY = 86;
+    const gap  = 10;
+    const cw   = (BW - padX * 2 - gap) / cols;
+    const ch   = 112;
+
+    SKINS.forEach((skin, idx) => {
+      const col  = idx % cols;
+      const row  = Math.floor(idx / cols);
+      const cx   = padX + col * (cw + gap);
+      const cy   = padY + row * (ch + gap);
+      const own  = save.ownedSkins.includes(skin.id);
+      const eqp  = save.equippedSkin === skin.id;
+
+      // Card background
+      ctx.save();
+      ctx.fillStyle   = eqp ? 'rgba(50,100,220,0.22)' : 'rgba(255,255,255,0.05)';
+      ctx.strokeStyle = eqp ? '#4488EE' : 'rgba(255,255,255,0.12)';
+      ctx.lineWidth   = eqp ? 2 : 1;
+      ctx.shadowColor = eqp ? '#3366CC' : 'transparent';
+      ctx.shadowBlur  = eqp ? 12 : 0;
+      rrPath(cx, cy, cw, ch, 10);
+      ctx.fill(); ctx.stroke();
+      ctx.restore();
+
+      // Skin swatch
+      ctx.save();
+      ctx.shadowColor = skin.glow;
+      ctx.shadowBlur  = 14;
+      ctx.fillStyle   = skin.color;
+      ctx.fillRect(cx + 10, cy + 12, 32, 32);
+      ctx.restore();
+
+      // Label
+      ctx.save();
+      ctx.fillStyle    = '#ffffff';
+      ctx.font         = 'bold 13px Arial,sans-serif';
+      ctx.textAlign    = 'left';
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillText(skin.label, cx + 52, cy + 26);
+      // Price or ownership
+      if (own) {
+        ctx.fillStyle = '#66CC70';
+        ctx.font      = '12px Arial,sans-serif';
+        ctx.fillText(t('owned'), cx + 52, cy + 44);
+      } else {
+        ctx.fillStyle = '#FFD700';
+        ctx.font      = '12px Arial,sans-serif';
+        ctx.fillText(`⬡ ${skin.price}`, cx + 52, cy + 44);
+      }
+      ctx.restore();
+
+      // Action button inside card
+      const bx = cx + 8;
+      const by = cy + ch - 34;
+      const bw = cw - 16;
+      const bh = 26;
+
+      let bLabel, bBg, bFg;
+      if (eqp) {
+        bLabel = t('equipped'); bBg = '#2255CC'; bFg = '#fff';
+      } else if (own) {
+        bLabel = t('equip');    bBg = '#223355'; bFg = '#AAD0FF';
+      } else {
+        const canBuy = save.coins >= skin.price;
+        bLabel = `${t('buy')} ⬡${skin.price}`;
+        bBg    = canBuy ? '#CC8800' : '#444444';
+        bFg    = canBuy ? '#000'    : '#888888';
+      }
+
+      const btnR = drawBtn(bx, by, bw, bh, bLabel, bBg, bFg, 7);
+      shopBtns.push({ ...btnR, skinId: skin.id, own, eqp, price: skin.price });
+    });
+
+    // — BACK button —
+    const back = drawBtn(14, 10, 78, 28, t('back'),
+                         'rgba(255,255,255,0.08)', '#ffffff', 6);
+    shopBtns.push({ ...back, action: 'back' });
+
+    // — Language bar —
+    drawLangBar(BH - 38);
+  }
+
+  /* ----------------------------------------------------------------
+     §21  INPUT HANDLER
+     ---------------------------------------------------------------- */
+  /**
+   * Convert a raw viewport coordinate to the logical (base) space
+   * used by all game drawing code.
+   */
+  function toLogical(vx, vy) {
+    return {
+      lx: (vx - offX) / cssScale,
+      ly: (vy - offY) / cssScale,
+    };
+  }
+
+  /** Main tap/click dispatcher */
+  function onTap(vx, vy) {
+    const { lx, ly } = toLogical(vx, vy);
+
+    // Check mute button first (works in all states)
+    if (muteBtn && hit(muteBtn, lx, ly)) {
+      toggleMute();
+      playSound('menuClick');
+      return;
+    }
+
+    if (state === S.MENU) {
+      if (menuBtns.play && hit(menuBtns.play, lx, ly)) { 
+        playSound('menuClick');
+        startGame(); 
+        return; 
+      }
+      if (menuBtns.shop && hit(menuBtns.shop, lx, ly)) { 
+        playSound('menuClick');
+        state = S.SHOP; 
+        return; 
+      }
+      checkLangBar(lx, ly);
+      return;
+    }
+
+    if (state === S.PLAY) {
+      player.flip();
+      return;
+    }
+
+    if (state === S.OVER) {
+      if (overBtns.retry && hit(overBtns.retry, lx, ly)) {
+        playSound('menuClick');
+        showInterstitialAd();   // ad hook fires here
+        startGame(); return;
+      }
+      if (overBtns.menu && hit(overBtns.menu, lx, ly)) {
+        playSound('menuClick');
+        state = S.MENU; return;
+      }
+      return;
+    }
+
+    if (state === S.SHOP) {
+      // Check skin / action buttons
+      for (const b of shopBtns) {
+        if (hit(b, lx, ly)) {
+          if (b.action === 'back') { 
+            playSound('menuClick');
+            state = S.MENU; 
+            return; 
+          }
+          if (b.skinId) {
+            if (b.eqp)  return;                  // already equipped
+            if (b.own)  { 
+              playSound('menuClick');
+              save.equippedSkin = b.skinId; 
+              persist(); 
+              return; 
+            }
+            if (save.coins >= b.price) {         // purchase
+              playSound('menuClick');
+              save.coins -= b.price;
+              save.ownedSkins.push(b.skinId);
+              save.equippedSkin = b.skinId;
+              persist();
+            }
+            return;
+          }
+        }
+      }
+      checkLangBar(lx, ly);
+    }
+  }
+
+  /** Test if a tap hit one of the language toggle buttons */
+  function checkLangBar(lx, ly) {
+    if (!langBarR) return;
+    const lb = langBarR;
+    if (ly < lb.y || ly > lb.y + lb.h) return;
+    LANG_IDS.forEach((lid, i) => {
+      const bx = lb.x + i * (lb.itemW + lb.gap);
+      if (lx >= bx && lx <= bx + lb.itemW) {
+        save.lang = lid;
+        persist();
+      }
+    });
+  }
+
+  /* ----------------------------------------------------------------
+     §22  MAIN UPDATE  (called once per animation frame)
+     ---------------------------------------------------------------- */
+  function update() {
+    if (state !== S.PLAY) return;
+
+    frame++;
+
+    // Gradually increase scroll speed
+    speed = Math.min(CFG.SPD_MAX, CFG.SPD_INIT + frame * CFG.SPD_INC);
+
+    // Accumulate score (scales with speed for risk/reward)
+    score += CFG.SCORE_RATE * (speed / CFG.SPD_INIT);
+
+    tickObstacles(speed);
+    tickCoins(speed);
+    player.tick();
+    tickParticles();
+    tickShake();
+
+    if (hitObstacle()) die();
+  }
+
+  /* ----------------------------------------------------------------
+     §23  MAIN RENDER  (called once per animation frame)
+     ---------------------------------------------------------------- */
+  function render() {
+    // Clear to opaque black (prevents ghost frames)
+    ctx.clearRect(0, 0, BW, BH);
+
+    // Apply screen-shake via canvas translate
+    ctx.save();
+    ctx.translate(shakeX, shakeY);
+
+    switch (state) {
+      // ── MENU ─────────────────────────────────────────────────
+      case S.MENU:
+        drawMenu();
+        break;
+
+      // ── PLAYING ──────────────────────────────────────────────
+      case S.PLAY:
+        drawBG(speed);
+        drawBoundaries();
+        drawCoins();
+        drawObstacles();
+        player.draw();
+        drawParticles();
+        drawHUD();
+        break;
+
+      // ── GAME OVER ────────────────────────────────────────────
+      case S.OVER:
+        // Show frozen game world behind the modal panel
+        drawBG(0);
+        drawBoundaries();
+        drawCoins();
+        drawObstacles();
+        player.draw();
+        drawParticles();
+        drawHUD();
+        drawGameOver();
+        tickParticles();  // keep particles animating on over screen
+        tickShake();
+        break;
+
+      // ── SHOP ─────────────────────────────────────────────────
+      case S.SHOP:
+        drawShop();
+        break;
+    }
+
+    ctx.restore();
+  }
+
+  /* ----------------------------------------------------------------
+     §24  RESPONSIVE RESIZE  — scales canvas to fit any screen
+     ---------------------------------------------------------------- */
+  function resize() {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    // Maintain BW:BH aspect ratio, fit inside viewport
+    cssScale = Math.min(vw / BW, vh / BH);
+
+    // Keep the internal pixel buffer at the logical resolution.
+    // The CSS width/height scale the element — no blurry upscale.
+    canvas.width  = BW;
+    canvas.height = BH;
+    canvas.style.width  = Math.floor(BW * cssScale) + 'px';
+    canvas.style.height = Math.floor(BH * cssScale) + 'px';
+
+    // Recompute canvas offset (needed for pointer → logical mapping)
+    const rect = canvas.getBoundingClientRect();
+    offX = rect.left;
+    offY = rect.top;
+  }
+
+  /* ----------------------------------------------------------------
+     §25  MAIN LOOP  — requestAnimationFrame driven
+     ---------------------------------------------------------------- */
+  function loop() {
+    update();
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  /* ----------------------------------------------------------------
+     §26  INPUT BINDING
+     ---------------------------------------------------------------- */
+  function bindInput() {
+    // Touch devices
+    canvas.addEventListener('touchstart', e => {
+      e.preventDefault();
+      const t0 = e.changedTouches[0];
+      onTap(t0.clientX, t0.clientY);
+    }, { passive: false });
+
+    // Mouse / trackpad
+    canvas.addEventListener('mousedown', e => {
+      e.preventDefault();
+      onTap(e.clientX, e.clientY);
+    });
+
+    // Keyboard (desktop convenience)
+    window.addEventListener('keydown', e => {
+      if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
+        e.preventDefault();
+        if      (state === S.PLAY) player.flip();
+        else if (state === S.MENU) startGame();
+        else if (state === S.OVER) startGame();
+      }
+      if (e.code === 'Escape' && state === S.SHOP) state = S.MENU;
+    });
+  }
+
+  /* ----------------------------------------------------------------
+     §27  BOOT — tie everything together
+     ---------------------------------------------------------------- */
+  function boot() {
+    resize();
+    initStars();
+    initAudio(); // Initialize audio system
+    bindInput();
+    player.reset();   // place player at starting position
+
+    // Re-measure canvas offset after layout reflows
+    window.addEventListener('resize', () => {
+      resize();
+      requestAnimationFrame(() => {
+        const r = canvas.getBoundingClientRect();
+        offX = r.left; offY = r.top;
+      });
+    });
+
+    // Kick off the game loop
+    requestAnimationFrame(loop);
+  }
+
+  // 🚀 Start the engine
+  boot();
+
+  /* ================================================================
+     END OF GRAVITY SHIFT SOURCE
+     ================================================================
+     To add more skins : push entries to the SKINS array (§5)
+     To add languages  : add entries to STRINGS + LANG_IDS (§3)
+     To integrate ads  : implement showInterstitialAd() (§14)
+     To adjust feel    : tweak the CFG constants (§2)
+     ================================================================ */
+  </script>
+</body>
+</html>
